@@ -4,7 +4,8 @@
 
 This repository contains code for automating the translation of Nuevo Foundation's workshops from its workshop website using AI Large Language Models (LLM). The code leverages OpenAI's powerful language models to perform translation tasks, making the process more efficient and accurate. It was developed during Hacakthon 2023 on Microsoft's Redmond campus.
 
-![Nuevo Foundation Workshop Auto Translation Using AI LLM Models Logo](https://nuevofoundationwebassets.blob.core.windows.net/team/WorkshopAI.png) 
+<img src="https://nuevofoundationwebassets.blob.core.windows.net/team/WorkshopAI.png" height="400" alt="Nuevo Foundation Workshop Auto Translation Using AI LLM Models Logo">
+
 
 ## What it Does
 
