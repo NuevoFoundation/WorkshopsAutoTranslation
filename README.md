@@ -1,4 +1,4 @@
-# Workshop Auto Translation Using AI LLM Models
+# Workshop Auto Translation Using Azure's OpenAI Service
 
 ## Overview
 
