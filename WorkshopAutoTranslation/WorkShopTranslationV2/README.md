@@ -1,6 +1,6 @@
 # WorkShopTranslationV2 Tool
 
-This program is designed to translate a set of markdown files to a target language using [Github models](https://github.com/marketplace/models). It reads the contents of each file in a specified directory, sends the content to an LLM, and saves the translated content to new files in a different directory.
+This program is designed to translate a set of markdown files to a target language using [Github Models](https://github.com/marketplace/models). It reads the contents of each file in a specified directory, sends the content to an LLM, and saves the translated content to new files in a different directory.
 
 ## Features
 
@@ -10,10 +10,10 @@ This program is designed to translate a set of markdown files to a target langua
 
 ## How to Use
 
-1. **Prerequisite**: 
-- Create a Github account if you do not already have one and generate a [personal access token](https://github.com/settings/tokens). 
-- Download [.NET 8.0](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
-- Clone/download this repo locally or run it in [Github Codespaces](https://github.com/features/codespaces)
+1. **Prerequisites**
+   - Create a Github account if you do not already have one and generate a [personal access token](https://github.com/settings/tokens)
+   - Download and install [.NET 8.0](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
+   - Clone/download this repo locally or run it in [Github Codespaces](https://github.com/features/codespaces)
 
 2. **Set environment variables**: 
 Run the following command in terminal
