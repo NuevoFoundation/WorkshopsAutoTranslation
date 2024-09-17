@@ -4,7 +4,7 @@ This program is designed to translate a set of markdown files to a target langua
 
 ## Features
 
-1. **Reading from Files**: The script reads the content of each file in a given directory.
+1. **Reading from Folder**: The script reads the content of each file in a given directory.
 2. **Translation using Github Models**: The script uses the Azure AI Inference SDK to translate the content by feeding it to a supported Github Models LLM.
 3. **Saving Translated Content**: Once translated, the script saves the translated content to new files in a different directory.
 
@@ -40,4 +40,4 @@ Run the following command in terminal
 
 This program currently only supports a small set of languages. In order to add more, modify the `supportedLanguages` dictionary in `Program.cs`.
 
-**Disclaimer**: Ensure that your personal access token is kept confidential and not hardcoded into scripts that are publically accessible. Consider using environment variables or secure key vaults to store your access tokens.
+**Disclaimer**: Ensure that your personal access token is kept confidential and not hardcoded into scripts that are publically accessible. Consider using environment variables or secure key vaults to store your access tokens. Also limit the usage to 30 days so that you can generate a new token to be in compliance.
