@@ -9,54 +9,88 @@ namespace WorkShopTranslationV2
         {
             #region Secrets
             var endpoint = new Uri("https://models.inference.ai.azure.com");
-            var credential = new AzureKeyCredential("Enter your Pat token");
-            #endregion
+            var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? throw new InvalidOperationException("The GITHUB_TOKEN environment variable is not set.");
+			var credential = new AzureKeyCredential(token);
+			#endregion
 
-            string model = args[0];
-            string filePath = args[1];
-            string language = args[2];
+			// Contains the supported languages and their corresponding folder names
+			Dictionary<string, string> supportedLanguages = new()
+			{
+				{ "french", "francais" },
+				{ "spanish", "espanol" },
+				{ "english", "english" },
+				{ "german", "german" },
+				{ "portuguese", "brazilian-portuguese" },
+				{ "kyrgyz", "kyrgyz" },
+				{ "simplified-chinese", "simplified-chinese" },
+				{ "traditional-chinese", "traditional-chinese" }
+			};
 
-            var client = new ChatCompletionsClient(
+            string filePath = args[0];
+            string language = args[1];
+			string model = args.Length > 2 ? args[2] : "gpt-4o";
+
+            if (!supportedLanguages.ContainsKey(language.ToLower()))
+			{
+				Console.WriteLine("The language you entered is not supported. Please enter a language from the following list");
+                foreach (var item in supportedLanguages.Keys)
+                {
+                    Console.WriteLine(item);
+				}
+				return;
+            }
+
+			var client = new ChatCompletionsClient(
                 endpoint,
                 credential,
                 new ChatCompletionsClientOptions());
 
-            ReadPrompts(filePath, model, language, client);
-
+            ReadPrompts(filePath, model, language, supportedLanguages[language.ToLower()], client);
         }
 
-        public static void ReadPrompts(string folderPath, string model, string language, ChatCompletionsClient client)
+        public static void ReadPrompts(string folderPath, string model, string language, string languageFolder, ChatCompletionsClient client)
         {
-            // Get a list of all files in the folder
-            string[] files = Directory.GetFiles(folderPath);
+			// Get a list of all files in the folder
+			string[] files = Directory.GetFiles(folderPath);
 
             foreach (string path in files)
             {
-                string sourceStr = ReadFromFile(path);
+                Console.WriteLine($"Translating file: {path}");
 
-                // Translate the content of each file to French
-                var response = TranslateToLanguage(model, language, client, path);
+				string sourceStr = ReadFromFile(path);
 
-                // Handle the translation response here
-                // Create a translated file on the user's desktop
-                string fileName = Path.GetFileName(path);
-                string translatedFilePath = Path.Combine(@$"C:\Demos\Nuevo Workshops\workshops\content\{GetLanguageEnum(language)}\python-turtle\", fileName);
-
-                // create the directory if it doesn't exist
-                string directoryPath = Path.GetDirectoryName(translatedFilePath);
-                if (directoryPath != null)
+                try
                 {
-                    Directory.CreateDirectory(directoryPath);
-                }
-                else
+					// Translate the content of each file to the target language
+					var response = TranslateToLanguage(model, language, client, path);
+
+					// Handle the translation response here
+					// Create a translated file in the target language folder
+					string fileName = Path.GetFileName(path);
+					string contentFolder = Directory.GetParent(Directory.GetParent(folderPath).FullName).FullName;
+					string workshopFolder = Path.GetFileName(Path.GetDirectoryName(path));
+					string translatedFilePath = Path.Combine(contentFolder, languageFolder, workshopFolder, fileName);
+
+					// create the directory if it doesn't exist
+					string directoryPath = Path.GetDirectoryName(translatedFilePath);
+					if (directoryPath != null)
+					{
+						Directory.CreateDirectory(directoryPath);
+					}
+					else
+					{
+						throw new InvalidOperationException("The directory path is invalid.");
+					}
+
+					File.WriteAllText(translatedFilePath, response);
+
+					Console.WriteLine($"Success! Translated file path: {translatedFilePath}");
+                    Console.WriteLine();
+				}
+		        catch (Exception ex)
                 {
-                    throw new InvalidOperationException("The directory path is invalid.");
-                }
-
-                File.WriteAllText(translatedFilePath, response);
-
-                Console.WriteLine($"Translation for file: {path}");
-                Console.WriteLine(response);
+                    Console.WriteLine($"An unexpected error occurred: {ex.Message}");
+				}
             }
         }
 
@@ -80,7 +114,6 @@ namespace WorkShopTranslationV2
             };
 
             Response<ChatCompletions> response = client.Complete(requestOptions);
-            System.Console.WriteLine(response.Value.Choices[0].Message.Content);
             return response.Value.Choices[0].Message.Content;
         }
 
@@ -90,34 +123,5 @@ namespace WorkShopTranslationV2
             string sourceStr = File.ReadAllText(filePath);
             return sourceStr;
         }
-
-        public enum Language
-        {
-            francais,
-            espanol,
-            english,
-            german,
-            italiano
-        }
-
-        public static Language GetLanguageEnum(string language)
-        {
-            switch (language.ToLower())
-            {
-                case "french":
-                    return Language.francais;
-                case "spanish":
-                    return Language.espanol;
-                case "english":
-                    return Language.english;
-                case "german":
-                    return Language.german;
-                case "italian":
-                    return Language.italiano;
-                default:
-                    throw new ArgumentException("Unsupported language");
-            }
-        }
-
     }
 }
