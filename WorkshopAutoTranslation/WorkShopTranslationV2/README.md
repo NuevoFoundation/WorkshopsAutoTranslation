@@ -1,12 +1,12 @@
 # WorkShopTranslationV2 Tool
 
-This program is designed to translate a set of markdown files to a target language using [Github Models](https://github.com/marketplace/models). It reads the contents of each file in a specified directory, sends the content to an LLM, and saves the translated content to new files in a different directory.
+This program is designed to translate markdown file(s) to a target language using [Github Models](https://github.com/marketplace/models). It reads the contents of a file or folder, sends the content to an LLM, and saves the translated content to new files in a different directory depending on the target language.
 
 ## Features
 
-1. **Reading from Folder**: The script reads the content of each file in a given directory.
-2. **Translation using Github Models**: The script uses the Azure AI Inference SDK to translate the content by feeding it to a supported Github Models LLM.
-3. **Saving Translated Content**: Once translated, the script saves the translated content to new files in a different directory.
+1. **Reading from File/Folder**: The script reads the contents of markdown file(s) from an input path which can be either a file or folder.
+2. **Translation using Github Models**: The script uses the Azure AI Inference SDK to translate markdown file content by feeding it to a supported Github Models LLM.
+3. **Saving Translated Content**: Once translated, the script saves the translated content to new file(s) in a different directory.
 
 ## How to Use
 
@@ -32,7 +32,7 @@ Run the following command in terminal
 
 3. **Run the project**: Navigate to the `WorkShopTranslationV2` directory and run the following command:
 
-   `dotnet run <inputFolderPath> <targetLanguage> <model (optional)>`
+   `dotnet run <inputPath> <targetLanguage> <model (optional)>`
 
    ex. `dotnet run C:\Documents\workshops\content\english\csharp-basics french gpt-4o`
 
