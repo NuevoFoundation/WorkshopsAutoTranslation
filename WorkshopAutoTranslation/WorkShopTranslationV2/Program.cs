@@ -126,7 +126,7 @@ namespace WorkShopTranslationV2
                         },
                 Model = model,
                 Temperature = 1.0f,
-                MaxTokens = 1000,
+                MaxTokens = 1500,
                 NucleusSamplingFactor = 1.0f
             };
 
