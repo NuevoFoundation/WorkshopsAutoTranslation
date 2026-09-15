@@ -1,144 +1,152 @@
-﻿using Azure;
-using Azure.AI.Inference;
+using System.Text.Json;
 
-namespace WorkShopTranslationV2
+namespace WorkShopTranslationV2;
+
+internal static class Program
 {
-    internal class Program
+    private const string DefaultModel = "gpt-4o";
+
+    public static int Main(string[] args)
     {
-        static void Main(string[] args)
+        try
         {
-            #region Secrets
-            var endpoint = new Uri("https://models.inference.ai.azure.com");
-            var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? throw new InvalidOperationException("The GITHUB_TOKEN environment variable is not set.");
-			var credential = new AzureKeyCredential(token);
-			#endregion
-
-			// Contains the supported languages and their corresponding folder names
-			Dictionary<string, string> supportedLanguages = new()
-			{
-				{ "french", "francais" },
-				{ "spanish", "espanol" },
-				{ "english", "english" },
-				{ "german", "german" },
-				{ "portuguese", "brazilian-portuguese" },
-				{ "kyrgyz", "kyrgyz" },
-				{ "simplified-chinese", "simplified-chinese" },
-				{ "traditional-chinese", "traditional-chinese" }
-			};
-
-			if (args.Length < 2)
-			{
-				Console.WriteLine("Please provide the path and language as command line arguments.\n" +
-					"Usage: dotnet run <path> <language> <model (optional)>");
-				return;
-			}
-
-			string path = args[0];
-            string language = args[1];
-			string model = args.Length > 2 ? args[2] : "gpt-4o";
-
-            if (!supportedLanguages.ContainsKey(language.ToLower()))
-			{
-				Console.WriteLine("The language you entered is not supported. Please enter a language from the following list");
-                foreach (var item in supportedLanguages.Keys)
-                {
-                    Console.WriteLine(item);
-				}
-				return;
+            if (GapCliOptions.IsGapScanCommand(args))
+            {
+                return RunGapWorkflow(args);
             }
 
-			var client = new ChatCompletionsClient(
-                endpoint,
-                credential,
-                new ChatCompletionsClientOptions());
+            return RunLegacyWorkflow(args);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            return 1;
+        }
+    }
 
-			// Check if the input path is a markdown file
-            if (File.Exists(path) && Path.GetExtension(path).Equals(".md", StringComparison.OrdinalIgnoreCase))
-			{
-				TranslateFile(path, model, language, supportedLanguages[language.ToLower()], client);
-			}
-			// Otherwise, check if the input path is a directory
-			else if (Directory.Exists(path))
-			{
-				// Get a list of all markdown files in the folder and its subdirectories
-				string[] files = Directory.GetFiles(path, "*.md", SearchOption.AllDirectories);
-
-				foreach (string filePath in files)
-				{
-					TranslateFile(filePath, model, language, supportedLanguages[language.ToLower()], client);
-				}
-			}
-			else
-			{
-				Console.WriteLine("The path you entered is invalid. Please enter a valid file or directory path containing markdown files.");
-				return;
-			}
+    private static int RunLegacyWorkflow(string[] args)
+    {
+        if (args.Length < 2)
+        {
+            PrintLegacyUsage();
+            return 1;
         }
 
-        public static void TranslateFile(string filePath, string model, string language, string newFolder, ChatCompletionsClient client)
+        string path = args[0];
+        string languageInput = args[1];
+        string model = args.Length > 2 ? args[2] : DefaultModel;
+
+        if (!LanguageCatalog.TryResolveLanguage(languageInput, out var language) || language.IsEnglish)
         {
-			Console.WriteLine($"Translating file: {filePath}");
-			
-			try
-			{
-				var translatedFilePath = filePath.Replace("english", newFolder);
-				
-				// Check if the translated file already exists
-				if (File.Exists(translatedFilePath))
-				{
-					Console.WriteLine($"A translated file already exists at: {translatedFilePath}, skipping translation.");
-					return;
-				}
-
-				// Translate the contents of the file to the target language
-				var response = TranslateToLanguage(model, language, client, filePath);
-
-				// Create the directory if it doesn't exist
-				Directory.CreateDirectory(Path.GetDirectoryName(translatedFilePath)!);
-
-				// Write the translated content to the file
-				File.WriteAllText(translatedFilePath, response);
-
-				Console.WriteLine($"Success! Translated file path: {translatedFilePath}");
-				Console.WriteLine();
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine($"An unexpected error occurred: {ex.Message}");
-			}
-        }
-
-        public static string TranslateToLanguage(string model, string language, ChatCompletionsClient client, string filePath)
-        {
-			string prompt = $"Translate the following file to {language}." +
-				$" Ensure that the translation does not alter any Hugo-specific syntax, front matter, or HTML tags." +
-				$" Only translate the plain text content. Do not translate code blocks, URLs, or any metadata." +
-				$" Maintain the structure and formatting of the original file.";
-
-			string fileContent = ReadFromFile(filePath);
-
-            var requestOptions = new ChatCompletionsOptions()
+            Console.WriteLine("The language you entered is not supported. Please enter one of the following languages:");
+            foreach (var supportedLanguage in LanguageCatalog.GetSupportedLanguageKeys())
             {
-                Messages =
-                        {
-                            new ChatRequestSystemMessage(prompt),
-                            new ChatRequestUserMessage(fileContent),
-                        },
-                Model = model,
-                Temperature = 1.0f,
-                MaxTokens = 1500,
-                NucleusSamplingFactor = 1.0f
-            };
+                Console.WriteLine(supportedLanguage);
+            }
 
-            Response<ChatCompletions> response = client.Complete(requestOptions);
-            return response.Value.Choices[0].Message.Content;
+            return 1;
         }
 
-        public static string ReadFromFile(string filePath)
+        var translationService = TranslationService.CreateFromEnvironment();
+
+        if (File.Exists(path) && Path.GetExtension(path).Equals(".md", StringComparison.OrdinalIgnoreCase))
         {
-            // Read from a file
-            string fileContents = File.ReadAllText(filePath);
-            return fileContents;
+            WriteLegacyResult(translationService.TranslateFileIfMissing(path, model, language));
+            return 0;
         }
+
+        if (Directory.Exists(path))
+        {
+            foreach (string filePath in Directory.GetFiles(path, "*.md", SearchOption.AllDirectories).OrderBy(file => file, StringComparer.OrdinalIgnoreCase))
+            {
+                WriteLegacyResult(translationService.TranslateFileIfMissing(filePath, model, language));
+            }
+
+            return 0;
+        }
+
+        Console.WriteLine("The path you entered is invalid. Please enter a valid file or directory path containing markdown files.");
+        return 1;
+    }
+
+    private static int RunGapWorkflow(string[] args)
+    {
+        if (!GapCliOptions.TryParse(args, out var options, out var errorMessage))
+        {
+            Console.Error.WriteLine(errorMessage);
+            PrintGapUsage();
+            return 1;
+        }
+
+        var scanner = new GapScanner();
+
+        if (options.ReportOnly)
+        {
+            var report = scanner.Scan(options.RepoPath, options.LanguageFilter);
+            WriteFormattedOutput(report, options.Format);
+            return report.Errors.Count == 0 ? 0 : 1;
+        }
+
+        var translationService = TranslationService.CreateFromEnvironment();
+        var automation = new PrAutomation(scanner, translationService, new ProcessRunner());
+        var result = automation.Execute(options);
+
+        WriteAutomationSummary(result);
+        return result.ExitCode;
+    }
+
+    private static void WriteLegacyResult(TranslationResult result)
+    {
+        Console.WriteLine(result.Message);
+        if (!string.IsNullOrWhiteSpace(result.TargetPath))
+        {
+            Console.WriteLine($"Target: {result.TargetPath}");
+        }
+
+        Console.WriteLine();
+    }
+
+    private static void WriteFormattedOutput(object payload, OutputFormat format)
+    {
+        if (format == OutputFormat.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(payload, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            }));
+
+            return;
+        }
+
+        switch (payload)
+        {
+            case GapReport report:
+                Console.WriteLine(GapReportFormatter.Format(report));
+                break;
+            case AutomationRunResult result:
+                Console.WriteLine(AutomationRunResultFormatter.Format(result));
+                break;
+            default:
+                Console.WriteLine(payload);
+                break;
+        }
+    }
+
+    private static void WriteAutomationSummary(AutomationRunResult result)
+    {
+        Console.WriteLine(AutomationRunResultFormatter.Format(result));
+    }
+
+    private static void PrintLegacyUsage()
+    {
+        Console.WriteLine("Please provide the path and language as command line arguments.");
+        Console.WriteLine("Usage: dotnet run <path> <language> <model (optional)>");
+    }
+
+    private static void PrintGapUsage()
+    {
+        Console.WriteLine("Gap scanning usage:");
+        Console.WriteLine("  dotnet run -- --scan-gaps <path-to-workshops-repo> --report [--format json] [--language <lang>]");
+        Console.WriteLine("  dotnet run -- --scan-gaps <path-to-workshops-repo> --create-prs [--model gpt-4o] [--language <lang>] [--max-files-per-pr N] [--base-branch master] [--branch-prefix auto-translate/] [--repo owner/name] [--dry-run]");
     }
 }
