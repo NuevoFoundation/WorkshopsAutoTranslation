@@ -14,6 +14,19 @@ internal static class WorkshopPaths
     public static string GetTranslatedFilePath(string sourceFilePath, string targetLanguageFolder, string? repoPath = null)
     {
         string fullSourcePath = Path.GetFullPath(sourceFilePath);
+
+        if (!string.IsNullOrWhiteSpace(repoPath))
+        {
+            string englishRoot = GetEnglishRoot(repoPath);
+            string relativePath = Path.GetRelativePath(englishRoot, fullSourcePath);
+            if (!Path.IsPathRooted(relativePath)
+                && !relativePath.Equals("..", StringComparison.Ordinal)
+                && !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                return Path.Combine(GetLanguageRoot(repoPath, targetLanguageFolder), relativePath);
+            }
+        }
+
         string normalizedEnglishSegment = $"{Path.DirectorySeparatorChar}{EnglishFolderName}{Path.DirectorySeparatorChar}";
         int segmentIndex = fullSourcePath.IndexOf(normalizedEnglishSegment, StringComparison.OrdinalIgnoreCase);
 
@@ -24,16 +37,24 @@ internal static class WorkshopPaths
             return Path.Combine(prefix, targetLanguageFolder, suffix);
         }
 
-        if (!string.IsNullOrWhiteSpace(repoPath))
+        return fullSourcePath.Replace("english", targetLanguageFolder, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string? TryResolveRepositoryRoot(string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string searchPath = File.Exists(fullPath)
+            ? Path.GetDirectoryName(fullPath) ?? fullPath
+            : fullPath;
+
+        for (var current = new DirectoryInfo(searchPath); current is not null; current = current.Parent)
         {
-            string englishRoot = GetEnglishRoot(repoPath);
-            if (fullSourcePath.StartsWith(englishRoot, StringComparison.OrdinalIgnoreCase))
+            if (Directory.Exists(Path.Combine(current.FullName, ContentFolderName, EnglishFolderName)))
             {
-                string relativePath = Path.GetRelativePath(englishRoot, fullSourcePath);
-                return Path.Combine(GetLanguageRoot(repoPath, targetLanguageFolder), relativePath);
+                return current.FullName;
             }
         }
 
-        return fullSourcePath.Replace("english", targetLanguageFolder, StringComparison.OrdinalIgnoreCase);
+        return null;
     }
 }

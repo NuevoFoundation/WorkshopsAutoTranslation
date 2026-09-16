@@ -2,6 +2,12 @@ using System.Reflection;
 
 namespace WorkShopTranslationV2.Tests;
 
+[CollectionDefinition("GapScannerContractTests", DisableParallelization = true)]
+public sealed class GapScannerContractTestCollection
+{
+}
+
+[Collection("GapScannerContractTests")]
 public class GapScannerContractTests
 {
     [Fact]
@@ -101,27 +107,112 @@ public class GapScannerContractTests
                 .ToArray());
     }
 
+    [Fact]
+    public void PrAutomation_dry_run_reuses_existing_open_pull_request_from_camel_case_gh_json()
+    {
+        using var fixture = new ContentFixture();
+
+        fixture.WriteMarkdown(@"content\english\workshop-a\intro.md");
+        fixture.InitializeGitRepository();
+        fixture.CreateAndPushBranch("auto-translate/espanol");
+
+        var result = WorkShopTranslationApi.RunDryPrAutomation(
+            fixture.RootPath,
+            "spanish",
+            maxFilesPerPr: 5,
+            (_, _) => """[{"number":42,"title":"Existing PR","url":"https://github.com/NuevoFoundation/workshops/pull/42","headRefName":"auto-translate/espanol","baseRefName":"master"}]""");
+
+        Assert.Empty(result.Errors);
+        var language = Assert.Single(result.Languages);
+        Assert.True(language.ReusedExistingPullRequest);
+        Assert.Equal(42, language.PullRequestNumber);
+        Assert.Equal("https://github.com/NuevoFoundation/workshops/pull/42", language.PullRequestUrl);
+        Assert.Contains(language.Notes, note => note.Contains("Dry run", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void PrAutomation_dry_run_records_language_failure_and_continues_processing_remaining_languages()
+    {
+        using var fixture = new ContentFixture();
+
+        fixture.WriteMarkdown(@"content\english\workshop-a\intro.md");
+        fixture.InitializeGitRepository();
+
+        var result = WorkShopTranslationApi.RunDryPrAutomation(
+            fixture.RootPath,
+            languageFilter: null,
+            maxFilesPerPr: 5,
+            (_, branchName) => branchName.Equals("auto-translate/espanol", StringComparison.OrdinalIgnoreCase)
+                ? throw new InvalidOperationException("simulated gh failure for spanish")
+                : "[]");
+
+        Assert.Empty(result.Errors);
+
+        var spanish = Assert.Single(result.Languages, language => language.Language == "spanish");
+        Assert.Contains(spanish.Failures, failure => failure.Contains("simulated gh failure for spanish", StringComparison.OrdinalIgnoreCase));
+
+        var french = Assert.Single(result.Languages, language => language.Language == "french");
+        Assert.Empty(french.Failures);
+        Assert.Contains(french.Notes, note => note.Contains("Dry run", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void WorkshopPaths_prefers_repo_anchored_english_root_when_repo_path_contains_english_segment()
+    {
+        using var fixture = new ContentFixture(includeEnglishSegmentInRoot: true);
+
+        string sourcePath = fixture.WriteMarkdown(@"content\english\dotnet\intro.md");
+
+        string translatedPath = WorkShopTranslationApi.GetTranslatedFilePath(sourcePath, "espanol", fixture.RootPath);
+
+        Assert.Equal(
+            Path.Combine(fixture.RootPath, @"content\espanol\dotnet\intro.md"),
+            translatedPath);
+    }
+
+    [Fact]
+    public void TranslationService_translate_file_if_missing_uses_repo_anchored_target_path()
+    {
+        using var fixture = new ContentFixture(includeEnglishSegmentInRoot: true);
+
+        string sourcePath = fixture.WriteMarkdown(@"content\english\workshop-a\intro.md");
+        string expectedTargetPath = fixture.WriteMarkdown(@"content\espanol\workshop-a\intro.md");
+
+        var result = WorkShopTranslationApi.TranslateFileIfMissing(sourcePath, "gpt-4o", "spanish", fixture.RootPath);
+
+        Assert.True(result.SkippedExisting);
+        Assert.Equal(expectedTargetPath, result.TargetPath);
+        Assert.Contains(expectedTargetPath, result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string Normalize(string path) => path.Replace('/', '\\');
 }
 
 internal sealed class ContentFixture : IDisposable
 {
-    public ContentFixture()
+    private readonly List<string> _cleanupPaths = [];
+
+    public ContentFixture(bool includeEnglishSegmentInRoot = false)
     {
-        RootPath = Path.Combine(AppContext.BaseDirectory, "test-fixtures", Guid.NewGuid().ToString("N"));
+        string fixtureRoot = Path.Combine(AppContext.BaseDirectory, "test-fixtures");
+        RootPath = includeEnglishSegmentInRoot
+            ? Path.Combine(fixtureRoot, "english", Guid.NewGuid().ToString("N"))
+            : Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(RootPath);
         RemotePath = $"{RootPath}-remote.git";
+        _cleanupPaths.Add(RemotePath);
     }
 
     public string RootPath { get; }
 
     public string RemotePath { get; }
 
-    public void WriteMarkdown(string relativePath, string contents = "# sample")
+    public string WriteMarkdown(string relativePath, string contents = "# sample")
     {
         var fullPath = Path.Combine(RootPath, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, contents);
+        return fullPath;
     }
 
     public void InitializeGitRepository()
@@ -136,10 +227,21 @@ internal sealed class ContentFixture : IDisposable
         RunProcess("git", "push -u origin master");
     }
 
+    public void CreateAndPushBranch(string branchName)
+    {
+        RunProcess("git", $"checkout -b \"{branchName}\"");
+        RunProcess("git", $"push -u origin \"{branchName}\"");
+        RunProcess("git", "checkout master");
+    }
+
     public void Dispose()
     {
         DeleteDirectoryIfPresent(RootPath);
-        DeleteDirectoryIfPresent(RemotePath);
+
+        foreach (string cleanupPath in _cleanupPaths)
+        {
+            DeleteDirectoryIfPresent(cleanupPath);
+        }
     }
 
     private void RunProcess(string fileName, string arguments, string? workingDirectory = null)
@@ -204,10 +306,15 @@ internal sealed record LanguageAutomationResultView(
     int MissingBefore,
     int SelectedForTranslation,
     int RemainingAfter,
+    bool ReusedExistingPullRequest,
+    int? PullRequestNumber,
+    string? PullRequestUrl,
     IReadOnlyList<string> FilesTouched,
     IReadOnlyList<string> OrphanWarnings,
     IReadOnlyList<string> Notes,
     IReadOnlyList<string> Failures);
+
+internal sealed record TranslationResultView(bool Created, bool SkippedExisting, string? TargetPath, string Message);
 
 internal static class WorkShopTranslationApi
 {
@@ -226,14 +333,18 @@ internal static class WorkShopTranslationApi
         return ReadGapReport(report);
     }
 
-    public static AutomationRunResultView RunDryPrAutomation(string repoPath, string languageFilter, int maxFilesPerPr)
+    public static AutomationRunResultView RunDryPrAutomation(
+        string repoPath,
+        string? languageFilter,
+        int maxFilesPerPr,
+        Func<string, string, string>? openPullRequestJsonProvider = null)
     {
         var options = ParseGapCliOptions(repoPath, languageFilter, maxFilesPerPr);
         var automationType = RequireType("PrAutomation");
         var scanner = Activator.CreateInstance(RequireType("GapScanner")) ?? throw new InvalidOperationException("Could not construct GapScanner.");
         var translationService = Activator.CreateInstance(RequireType("TranslationService"), [null]) ?? throw new InvalidOperationException("Could not construct TranslationService.");
         var processRunner = Activator.CreateInstance(RequireType("ProcessRunner")) ?? throw new InvalidOperationException("Could not construct ProcessRunner.");
-        var automation = Activator.CreateInstance(automationType, [scanner, translationService, processRunner])
+        var automation = Activator.CreateInstance(automationType, [scanner, translationService, processRunner, openPullRequestJsonProvider])
             ?? throw new InvalidOperationException("Could not construct PrAutomation.");
 
         var execute = automationType.GetMethod("Execute", BindingFlags.Instance | BindingFlags.Public)
@@ -245,30 +356,65 @@ internal static class WorkShopTranslationApi
         return ReadAutomationResult(result);
     }
 
-    private static object ParseGapCliOptions(string repoPath, string languageFilter, int maxFilesPerPr)
+    public static string GetTranslatedFilePath(string sourceFilePath, string targetLanguageFolder, string repoPath)
+    {
+        var workshopPathsType = RequireType("WorkshopPaths");
+        var method = workshopPathsType.GetMethod("GetTranslatedFilePath", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("WorkshopPaths.GetTranslatedFilePath was not found.");
+
+        return method.Invoke(null, [sourceFilePath, targetLanguageFolder, repoPath])?.ToString()
+            ?? throw new InvalidOperationException("WorkshopPaths.GetTranslatedFilePath returned null.");
+    }
+
+    public static TranslationResultView TranslateFileIfMissing(string sourceFilePath, string model, string languageInput, string repoPath)
+    {
+        if (!TryResolveLanguage(languageInput, out var language))
+        {
+            throw new InvalidOperationException($"Unsupported language '{languageInput}'.");
+        }
+
+        var translationServiceType = RequireType("TranslationService");
+        var translationService = Activator.CreateInstance(translationServiceType, [null])
+            ?? throw new InvalidOperationException("Could not construct TranslationService.");
+
+        var method = translationServiceType.GetMethod("TranslateFileIfMissing", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new InvalidOperationException("TranslationService.TranslateFileIfMissing was not found.");
+
+        var result = method.Invoke(translationService, [sourceFilePath, model, language, repoPath])
+            ?? throw new InvalidOperationException("TranslationService.TranslateFileIfMissing returned null.");
+
+        return new TranslationResultView(
+            ReadBool(result, "Created"),
+            ReadBool(result, "SkippedExisting"),
+            RequireProperty(result, "TargetPath").GetValue(result)?.ToString(),
+            ReadString(result, "Message"));
+    }
+
+    private static object ParseGapCliOptions(string repoPath, string? languageFilter, int maxFilesPerPr)
     {
         var optionsType = RequireType("GapCliOptions");
         var tryParse = optionsType.GetMethod("TryParse", BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException("GapCliOptions.TryParse was not found.");
 
-        object?[] args =
-        [
-            new[]
-            {
-                "--scan-gaps",
-                repoPath,
-                "--create-prs",
-                "--dry-run",
-                "--language",
-                languageFilter,
-                "--max-files-per-pr",
-                maxFilesPerPr.ToString(),
-                "--repo",
-                "NuevoFoundation/workshops"
-            },
-            null,
-            string.Empty
-        ];
+        var commandLineArgs = new List<string>
+        {
+            "--scan-gaps",
+            repoPath,
+            "--create-prs",
+            "--dry-run",
+            "--max-files-per-pr",
+            maxFilesPerPr.ToString(),
+            "--repo",
+            "NuevoFoundation/workshops"
+        };
+
+        if (!string.IsNullOrWhiteSpace(languageFilter))
+        {
+            commandLineArgs.Add("--language");
+            commandLineArgs.Add(languageFilter);
+        }
+
+        object?[] args = [commandLineArgs.ToArray(), null, string.Empty];
 
         var parsed = (bool)(tryParse.Invoke(null, args) ?? false);
         if (!parsed)
@@ -303,6 +449,9 @@ internal static class WorkShopTranslationApi
                 ReadInt(item, "MissingBefore"),
                 ReadInt(item, "SelectedForTranslation"),
                 ReadInt(item, "RemainingAfter"),
+                ReadBool(item, "ReusedExistingPullRequest"),
+                ReadNullableInt(item, "PullRequestNumber"),
+                RequireProperty(item, "PullRequestUrl").GetValue(item)?.ToString(),
                 ReadStringList(item, "FilesTouched"),
                 ReadStringList(item, "OrphanWarnings"),
                 ReadStringList(item, "Notes"),
@@ -329,9 +478,16 @@ internal static class WorkShopTranslationApi
     private static string ReadString(object owner, string propertyName) =>
         RequireProperty(owner, propertyName).GetValue(owner)?.ToString() ?? string.Empty;
 
+    private static bool ReadBool(object owner, string propertyName) =>
+        (bool)(RequireProperty(owner, propertyName).GetValue(owner)
+            ?? throw new InvalidOperationException($"Property '{propertyName}' on '{owner.GetType().Name}' was null."));
+
     private static int ReadInt(object owner, string propertyName) =>
         (int)(RequireProperty(owner, propertyName).GetValue(owner)
             ?? throw new InvalidOperationException($"Property '{propertyName}' on '{owner.GetType().Name}' was null."));
+
+    private static int? ReadNullableInt(object owner, string propertyName) =>
+        (int?)RequireProperty(owner, propertyName).GetValue(owner);
 
     private static PropertyInfo RequireProperty(object owner, string propertyName) =>
         owner.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
@@ -340,4 +496,16 @@ internal static class WorkShopTranslationApi
     private static Type RequireType(string name) =>
         TargetAssembly.GetTypes().FirstOrDefault(type => type.Name == name)
         ?? throw new InvalidOperationException($"Type '{name}' was not found in WorkShopTranslationV2.");
+
+    private static bool TryResolveLanguage(string input, out object language)
+    {
+        var catalogType = RequireType("LanguageCatalog");
+        var method = catalogType.GetMethod("TryResolveLanguage", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("LanguageCatalog.TryResolveLanguage was not found.");
+
+        object?[] args = [input, null];
+        bool resolved = (bool)(method.Invoke(null, args) ?? false);
+        language = args[1] ?? throw new InvalidOperationException("LanguageCatalog.TryResolveLanguage returned null language.");
+        return resolved;
+    }
 }

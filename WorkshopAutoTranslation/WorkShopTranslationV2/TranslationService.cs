@@ -23,14 +23,14 @@ internal sealed class TranslationService
         return new TranslationService(client);
     }
 
-    public TranslationResult TranslateFileIfMissing(string sourceFilePath, string model, LanguageDefinition language)
+    public TranslationResult TranslateFileIfMissing(string sourceFilePath, string model, LanguageDefinition language, string? repoPath = null)
     {
         if (!File.Exists(sourceFilePath))
         {
             return TranslationResult.Failure(sourceFilePath, null, $"Source file is missing, skipping: {sourceFilePath}");
         }
 
-        string targetFilePath = WorkshopPaths.GetTranslatedFilePath(sourceFilePath, language.FolderName);
+        string targetFilePath = WorkshopPaths.GetTranslatedFilePath(sourceFilePath, language.FolderName, repoPath);
         if (File.Exists(targetFilePath))
         {
             return TranslationResult.Skipped(sourceFilePath, targetFilePath, $"A translated file already exists at: {targetFilePath}, skipping translation.");
