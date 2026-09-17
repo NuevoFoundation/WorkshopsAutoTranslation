@@ -119,12 +119,15 @@ internal sealed class PrAutomation
                 return languageResult;
             }
 
-            var selectedGaps = branchReport.Gaps
-                .OrderBy(gap => gap.SourcePath, StringComparer.OrdinalIgnoreCase)
-                .Take(options.MaxFilesPerPr)
-                .ToList();
+            var selection = SelectWorkshopAtomicGaps(branchReport.Gaps, options.MaxWorkshopsPerPr);
+            var selectedGaps = selection.SelectedGaps;
 
             languageResult.SelectedForTranslation = selectedGaps.Count;
+            languageResult.SelectedWorkshopCount = selection.SelectedWorkshopCount;
+            languageResult.DeferredWorkshopCount = selection.DeferredWorkshopCount;
+            languageResult.DeferredFileCount = selection.DeferredFileCount;
+            languageResult.Notes.Add(
+                $"Selected {selection.SelectedWorkshopCount} whole workshop(s) for translation and deferred {selection.DeferredWorkshopCount} workshop(s) ({selection.DeferredFileCount} file(s)).");
 
             if (options.DryRun)
             {
@@ -211,6 +214,26 @@ internal sealed class PrAutomation
     private void EnsureGitRepository(string repoPath)
     {
         _processRunner.Run("git", ["rev-parse", "--show-toplevel"], repoPath);
+    }
+
+    private static WorkshopSelectionResult SelectWorkshopAtomicGaps(IEnumerable<GapEntry> gaps, int maxWorkshopsPerPr)
+    {
+        var workshopGroups = gaps
+            .GroupBy(gap => gap.Workshop, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new WorkshopGapGroup(
+                group.Key,
+                group.OrderBy(gap => gap.SourcePath, StringComparer.OrdinalIgnoreCase).ToList()))
+            .ToList();
+
+        var selectedWorkshops = workshopGroups.Take(maxWorkshopsPerPr).ToList();
+        var deferredWorkshops = workshopGroups.Skip(maxWorkshopsPerPr).ToList();
+
+        return new WorkshopSelectionResult(
+            selectedWorkshops.SelectMany(group => group.Gaps).ToList(),
+            selectedWorkshops.Count,
+            deferredWorkshops.Count,
+            deferredWorkshops.Sum(group => group.Gaps.Count));
     }
 
     private void EnsureCleanWorkingTree(string repoPath)
@@ -379,6 +402,8 @@ internal sealed class PrAutomation
         builder.AppendLine($"- Language: {result.Language} (`{result.LanguageFolder}`)");
         builder.AppendLine($"- Base branch: {baseBranch}");
         builder.AppendLine($"- Files translated this run: {result.TranslatedCount}");
+        builder.AppendLine($"- Whole workshops selected this run: {result.SelectedWorkshopCount}");
+        builder.AppendLine($"- Whole workshops deferred to a later run: {result.DeferredWorkshopCount}");
         builder.AppendLine($"- Remaining detected gaps after this run: {result.RemainingAfter}");
 
         if (result.Failures.Count > 0)
@@ -444,6 +469,9 @@ internal sealed class LanguageAutomationResult
     public string BranchName { get; init; } = string.Empty;
     public int MissingBefore { get; set; }
     public int SelectedForTranslation { get; set; }
+    public int SelectedWorkshopCount { get; set; }
+    public int DeferredWorkshopCount { get; set; }
+    public int DeferredFileCount { get; set; }
     public int TranslatedCount { get; set; }
     public int RemainingAfter { get; set; }
     public bool ReusedExistingPullRequest { get; set; }
@@ -493,6 +521,8 @@ internal static class AutomationRunResultFormatter
             lines.Add($"- {language.Language} ({language.BranchName})");
             lines.Add($"  missing before: {language.MissingBefore}");
             lines.Add($"  selected this run: {language.SelectedForTranslation}");
+            lines.Add($"  selected workshops: {language.SelectedWorkshopCount}");
+            lines.Add($"  deferred workshops: {language.DeferredWorkshopCount}");
             lines.Add($"  translated: {language.TranslatedCount}");
             lines.Add($"  remaining after: {language.RemainingAfter}");
 
@@ -524,3 +554,11 @@ internal static class AutomationRunResultFormatter
         return string.Join(Environment.NewLine, lines);
     }
 }
+
+internal sealed record WorkshopSelectionResult(
+    List<GapEntry> SelectedGaps,
+    int SelectedWorkshopCount,
+    int DeferredWorkshopCount,
+    int DeferredFileCount);
+
+internal sealed record WorkshopGapGroup(string Workshop, List<GapEntry> Gaps);

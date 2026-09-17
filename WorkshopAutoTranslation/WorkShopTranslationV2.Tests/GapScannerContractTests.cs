@@ -79,32 +79,103 @@ public class GapScannerContractTests
     }
 
     [Fact]
-    public void PrAutomation_dry_run_honors_max_files_per_pr_with_deterministic_order()
+    public void PrAutomation_dry_run_selects_multiple_small_workshops_atomically_when_they_fit_under_the_workshop_cap()
     {
         using var fixture = new ContentFixture();
 
-        fixture.WriteMarkdown(@"content\english\workshop-z\02-second.md");
         fixture.WriteMarkdown(@"content\english\workshop-a\01-first.md");
-        fixture.WriteMarkdown(@"content\english\workshop-z\03-third.md");
+        fixture.WriteMarkdown(@"content\english\workshop-a\02-second.md");
+        fixture.WriteMarkdown(@"content\english\workshop-b\01-third.md");
+        fixture.WriteMarkdown(@"content\english\workshop-c\01-fourth.md");
         fixture.InitializeGitRepository();
 
-        var result = WorkShopTranslationApi.RunDryPrAutomation(fixture.RootPath, "spanish", maxFilesPerPr: 2);
+        var result = WorkShopTranslationApi.RunDryPrAutomation(fixture.RootPath, "spanish", maxWorkshopsPerPr: 8);
         Assert.True(result.Errors.Count == 0, $"Automation errors: {string.Join(" | ", result.Errors)}");
         var language = Assert.Single(result.Languages);
 
         Assert.Equal("spanish", language.Language);
-        Assert.Equal(3, language.MissingBefore);
-        Assert.Equal(2, language.SelectedForTranslation);
-        Assert.Equal(3, language.RemainingAfter);
+        Assert.Equal(4, language.MissingBefore);
+        Assert.Equal(4, language.SelectedForTranslation);
+        Assert.Equal(4, language.RemainingAfter);
         Assert.Equal(
             new[]
             {
                 @"content\espanol\workshop-a\01-first.md",
-                @"content\espanol\workshop-z\02-second.md",
+                @"content\espanol\workshop-a\02-second.md",
+                @"content\espanol\workshop-b\01-third.md",
+                @"content\espanol\workshop-c\01-fourth.md",
             },
             language.FilesTouched
                 .Select(path => Normalize(Path.GetRelativePath(fixture.RootPath, path)))
                 .ToArray());
+        Assert.Contains(language.Notes, note => note.Contains("Selected 3 whole workshop(s)", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void PrAutomation_dry_run_selects_all_files_from_selected_workshops_even_when_one_workshop_is_large()
+    {
+        using var fixture = new ContentFixture();
+
+        fixture.WriteMarkdown(@"content\english\workshop-a\01-first.md");
+        fixture.WriteMarkdown(@"content\english\workshop-a\02-second.md");
+        fixture.WriteMarkdown(@"content\english\workshop-a\03-third.md");
+        fixture.WriteMarkdown(@"content\english\workshop-b\01-fourth.md");
+        fixture.InitializeGitRepository();
+
+        var result = WorkShopTranslationApi.RunDryPrAutomation(fixture.RootPath, "spanish", maxWorkshopsPerPr: 1);
+        Assert.Empty(result.Errors);
+        var language = Assert.Single(result.Languages);
+
+        Assert.Equal(4, language.MissingBefore);
+        Assert.Equal(3, language.SelectedForTranslation);
+        Assert.Equal(4, language.RemainingAfter);
+        Assert.Equal(
+            new[]
+            {
+                @"content\espanol\workshop-a\01-first.md",
+                @"content\espanol\workshop-a\02-second.md",
+                @"content\espanol\workshop-a\03-third.md",
+            },
+            language.FilesTouched
+                .Select(path => Normalize(Path.GetRelativePath(fixture.RootPath, path)))
+                .ToArray());
+        Assert.Contains(language.Notes, note => note.Contains("Selected 1 whole workshop(s) for translation and deferred 1 workshop(s) (1 file(s))", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void PrAutomation_dry_run_limits_selection_by_workshop_count_and_defers_the_rest()
+    {
+        using var fixture = new ContentFixture();
+
+        fixture.WriteMarkdown(@"content\english\workshop-a\01-first.md");
+        fixture.WriteMarkdown(@"content\english\workshop-b\01-second.md");
+        fixture.WriteMarkdown(@"content\english\workshop-b\02-third.md");
+        fixture.WriteMarkdown(@"content\english\workshop-c\01-fourth.md");
+        fixture.WriteMarkdown(@"content\english\workshop-d\01-fifth.md");
+        fixture.WriteMarkdown(@"content\english\workshop-e\01-sixth.md");
+        fixture.InitializeGitRepository();
+
+        var result = WorkShopTranslationApi.RunDryPrAutomation(fixture.RootPath, "spanish", maxWorkshopsPerPr: 2);
+        Assert.Empty(result.Errors);
+        var language = Assert.Single(result.Languages);
+
+        Assert.Equal(6, language.MissingBefore);
+        Assert.Equal(3, language.SelectedForTranslation);
+        Assert.Equal(6, language.RemainingAfter);
+        Assert.Equal(
+            new[]
+            {
+                @"content\espanol\workshop-a\01-first.md",
+                @"content\espanol\workshop-b\01-second.md",
+                @"content\espanol\workshop-b\02-third.md",
+            },
+            language.FilesTouched
+                .Select(path => Normalize(Path.GetRelativePath(fixture.RootPath, path)))
+                .ToArray());
+        Assert.DoesNotContain(language.FilesTouched, path => path.Contains(@"\workshop-c\", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(language.FilesTouched, path => path.Contains(@"\workshop-d\", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(language.FilesTouched, path => path.Contains(@"\workshop-e\", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(language.Notes, note => note.Contains("deferred 3 workshop(s) (3 file(s))", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -119,7 +190,7 @@ public class GapScannerContractTests
         var result = WorkShopTranslationApi.RunDryPrAutomation(
             fixture.RootPath,
             "spanish",
-            maxFilesPerPr: 5,
+            maxWorkshopsPerPr: 5,
             (_, _) => """[{"number":42,"title":"Existing PR","url":"https://github.com/NuevoFoundation/workshops/pull/42","headRefName":"auto-translate/espanol","baseRefName":"master"}]""");
 
         Assert.Empty(result.Errors);
@@ -141,7 +212,7 @@ public class GapScannerContractTests
         var result = WorkShopTranslationApi.RunDryPrAutomation(
             fixture.RootPath,
             languageFilter: null,
-            maxFilesPerPr: 5,
+            maxWorkshopsPerPr: 5,
             (_, branchName) => branchName.Equals("auto-translate/espanol", StringComparison.OrdinalIgnoreCase)
                 ? throw new InvalidOperationException("simulated gh failure for spanish")
                 : "[]");
@@ -336,10 +407,10 @@ internal static class WorkShopTranslationApi
     public static AutomationRunResultView RunDryPrAutomation(
         string repoPath,
         string? languageFilter,
-        int maxFilesPerPr,
+        int maxWorkshopsPerPr,
         Func<string, string, string>? openPullRequestJsonProvider = null)
     {
-        var options = ParseGapCliOptions(repoPath, languageFilter, maxFilesPerPr);
+        var options = ParseGapCliOptions(repoPath, languageFilter, maxWorkshopsPerPr);
         var automationType = RequireType("PrAutomation");
         var scanner = Activator.CreateInstance(RequireType("GapScanner")) ?? throw new InvalidOperationException("Could not construct GapScanner.");
         var translationService = Activator.CreateInstance(RequireType("TranslationService"), [null]) ?? throw new InvalidOperationException("Could not construct TranslationService.");
@@ -390,7 +461,7 @@ internal static class WorkShopTranslationApi
             ReadString(result, "Message"));
     }
 
-    private static object ParseGapCliOptions(string repoPath, string? languageFilter, int maxFilesPerPr)
+    private static object ParseGapCliOptions(string repoPath, string? languageFilter, int maxWorkshopsPerPr)
     {
         var optionsType = RequireType("GapCliOptions");
         var tryParse = optionsType.GetMethod("TryParse", BindingFlags.Public | BindingFlags.Static)
@@ -402,8 +473,8 @@ internal static class WorkShopTranslationApi
             repoPath,
             "--create-prs",
             "--dry-run",
-            "--max-files-per-pr",
-            maxFilesPerPr.ToString(),
+            "--max-workshops-per-pr",
+            maxWorkshopsPerPr.ToString(),
             "--repo",
             "NuevoFoundation/workshops"
         };
