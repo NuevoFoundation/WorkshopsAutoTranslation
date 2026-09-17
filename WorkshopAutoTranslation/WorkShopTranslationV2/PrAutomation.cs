@@ -5,15 +5,26 @@ namespace WorkShopTranslationV2;
 
 internal sealed class PrAutomation
 {
+    private static readonly JsonSerializerOptions PullRequestJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly GapScanner _scanner;
     private readonly TranslationService _translationService;
     private readonly ProcessRunner _processRunner;
+    private readonly Func<string, string, string>? _openPullRequestJsonProvider;
 
-    public PrAutomation(GapScanner scanner, TranslationService translationService, ProcessRunner processRunner)
+    public PrAutomation(
+        GapScanner scanner,
+        TranslationService translationService,
+        ProcessRunner processRunner,
+        Func<string, string, string>? openPullRequestJsonProvider = null)
     {
         _scanner = scanner;
         _translationService = translationService;
         _processRunner = processRunner;
+        _openPullRequestJsonProvider = openPullRequestJsonProvider;
     }
 
     public AutomationRunResult Execute(GapCliOptions options)
@@ -50,6 +61,11 @@ internal sealed class PrAutomation
                     var languageResult = ProcessLanguage(options, repository, language, result.RepositoryPath);
                     result.Languages.Add(languageResult);
                 }
+
+                if (result.Languages.Any(language => language.Failures.Count > 0))
+                {
+                    result.ExitCode = 1;
+                }
             }
             finally
             {
@@ -75,113 +91,121 @@ internal sealed class PrAutomation
             BranchName = branchName
         };
 
-        PullRequestInfo? existingPr = GetOpenPullRequest(repository, branchName);
-        languageResult.PullRequestNumber = existingPr?.Number;
-        languageResult.PullRequestUrl = existingPr?.Url;
-        languageResult.ReusedExistingPullRequest = existingPr is not null;
-
-        bool remoteBranchExists = existingPr is not null || RemoteBranchExists(repoPath, branchName);
-        PrepareBranch(repoPath, branchName, existingPr?.BaseRefName ?? options.BaseBranch, remoteBranchExists);
-
-        var branchReport = _scanner.Scan(repoPath, language.LanguageKey);
-        languageResult.OrphanWarnings.AddRange(branchReport.OrphanWarnings.Select(orphan => orphan.LanguageWorkshopPath));
-        languageResult.MissingBefore = branchReport.Gaps.Count;
-
-        if (branchReport.Errors.Count > 0)
+        try
         {
-            languageResult.Failures.AddRange(branchReport.Errors);
-            return languageResult;
-        }
+            PullRequestInfo? existingPr = GetOpenPullRequest(repository, branchName);
+            languageResult.PullRequestNumber = existingPr?.Number;
+            languageResult.PullRequestUrl = existingPr?.Url;
+            languageResult.ReusedExistingPullRequest = existingPr is not null;
 
-        if (branchReport.Gaps.Count == 0)
-        {
-            languageResult.Notes.Add(existingPr is not null
-                ? "No remaining gaps on the existing PR branch."
-                : "No gaps found for this language.");
-            return languageResult;
-        }
+            bool remoteBranchExists = existingPr is not null || RemoteBranchExists(repoPath, branchName);
+            PrepareBranch(repoPath, branchName, existingPr?.BaseRefName ?? options.BaseBranch, remoteBranchExists);
 
-        var selectedGaps = branchReport.Gaps
-            .OrderBy(gap => gap.SourcePath, StringComparer.OrdinalIgnoreCase)
-            .Take(options.MaxFilesPerPr)
-            .ToList();
+            var branchReport = _scanner.Scan(repoPath, language.LanguageKey);
+            languageResult.OrphanWarnings.AddRange(branchReport.OrphanWarnings.Select(orphan => orphan.LanguageWorkshopPath));
+            languageResult.MissingBefore = branchReport.Gaps.Count;
 
-        languageResult.SelectedForTranslation = selectedGaps.Count;
-
-        if (options.DryRun)
-        {
-            languageResult.Notes.Add($"Dry run: would translate {selectedGaps.Count} files on branch {branchName}.");
-            languageResult.FilesTouched.AddRange(selectedGaps.Select(gap => gap.TargetPath));
-            languageResult.RemainingAfter = languageResult.MissingBefore;
-            return languageResult;
-        }
-
-        var translatedTargetPaths = new List<string>();
-
-        foreach (var gap in selectedGaps)
-        {
-            if (!File.Exists(gap.SourcePath))
+            if (branchReport.Errors.Count > 0)
             {
-                languageResult.Failures.Add($"Missing english source, skipping: {gap.SourcePath}");
-                continue;
+                languageResult.Failures.AddRange(branchReport.Errors);
+                return languageResult;
             }
 
-            try
+            if (branchReport.Gaps.Count == 0)
             {
-                var translationResult = _translationService.TranslateFileIfMissing(gap.SourcePath, options.Model, language);
-                if (translationResult.Created && !string.IsNullOrWhiteSpace(translationResult.TargetPath))
+                languageResult.Notes.Add(existingPr is not null
+                    ? "No remaining gaps on the existing PR branch."
+                    : "No gaps found for this language.");
+                return languageResult;
+            }
+
+            var selectedGaps = branchReport.Gaps
+                .OrderBy(gap => gap.SourcePath, StringComparer.OrdinalIgnoreCase)
+                .Take(options.MaxFilesPerPr)
+                .ToList();
+
+            languageResult.SelectedForTranslation = selectedGaps.Count;
+
+            if (options.DryRun)
+            {
+                languageResult.Notes.Add($"Dry run: would translate {selectedGaps.Count} files on branch {branchName}.");
+                languageResult.FilesTouched.AddRange(selectedGaps.Select(gap => gap.TargetPath));
+                languageResult.RemainingAfter = languageResult.MissingBefore;
+                return languageResult;
+            }
+
+            var translatedTargetPaths = new List<string>();
+
+            foreach (var gap in selectedGaps)
+            {
+                if (!File.Exists(gap.SourcePath))
                 {
-                    translatedTargetPaths.Add(translationResult.TargetPath);
-                    languageResult.FilesTouched.Add(translationResult.TargetPath);
-                    languageResult.TranslatedCount++;
+                    languageResult.Failures.Add($"Missing english source, skipping: {gap.SourcePath}");
+                    continue;
                 }
-                else
+
+                try
                 {
-                    languageResult.Notes.Add(translationResult.Message);
+                    var translationResult = _translationService.TranslateFileIfMissing(gap.SourcePath, options.Model, language, repoPath);
+                    if (translationResult.Created && !string.IsNullOrWhiteSpace(translationResult.TargetPath))
+                    {
+                        translatedTargetPaths.Add(translationResult.TargetPath);
+                        languageResult.FilesTouched.Add(translationResult.TargetPath);
+                        languageResult.TranslatedCount++;
+                    }
+                    else
+                    {
+                        languageResult.Notes.Add(translationResult.Message);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    languageResult.Failures.Add($"{gap.SourcePath}: {ex.Message}");
                 }
             }
-            catch (Exception ex)
+
+            if (translatedTargetPaths.Count == 0)
             {
-                languageResult.Failures.Add($"{gap.SourcePath}: {ex.Message}");
+                languageResult.Notes.Add("No new files were created for this language.");
+                languageResult.RemainingAfter = _scanner.Scan(repoPath, language.LanguageKey).Gaps.Count;
+                return languageResult;
             }
-        }
 
-        if (translatedTargetPaths.Count == 0)
-        {
-            languageResult.Notes.Add("No new files were created for this language.");
-            languageResult.RemainingAfter = _scanner.Scan(repoPath, language.LanguageKey).Gaps.Count;
+            StageFiles(repoPath, translatedTargetPaths);
+            if (!HasStagedChanges(repoPath))
+            {
+                languageResult.Notes.Add("No staged changes detected after translation.");
+                languageResult.RemainingAfter = _scanner.Scan(repoPath, language.LanguageKey).Gaps.Count;
+                return languageResult;
+            }
+
+            CommitChanges(repoPath, language, translatedTargetPaths.Count);
+            PushBranch(repoPath, branchName);
+
+            var updatedReport = _scanner.Scan(repoPath, language.LanguageKey);
+            languageResult.RemainingAfter = updatedReport.Gaps.Count;
+
+            string title = $"Auto-translate missing {language.LanguageKey} workshop content";
+            string body = BuildPullRequestBody(languageResult, options, existingPr?.BaseRefName ?? options.BaseBranch);
+
+            if (existingPr is null)
+            {
+                var createdPr = CreatePullRequest(repository, branchName, existingPr?.BaseRefName ?? options.BaseBranch, title, body);
+                languageResult.PullRequestNumber = createdPr.Number;
+                languageResult.PullRequestUrl = createdPr.Url;
+            }
+            else
+            {
+                UpdatePullRequest(repository, existingPr.Number, title, body);
+            }
+
             return languageResult;
         }
-
-        StageFiles(repoPath, translatedTargetPaths);
-        if (!HasStagedChanges(repoPath))
+        catch (Exception ex)
         {
-            languageResult.Notes.Add("No staged changes detected after translation.");
-            languageResult.RemainingAfter = _scanner.Scan(repoPath, language.LanguageKey).Gaps.Count;
+            languageResult.Failures.Add(ex.Message);
             return languageResult;
         }
-
-        CommitChanges(repoPath, language, translatedTargetPaths.Count);
-        PushBranch(repoPath, branchName);
-
-        var updatedReport = _scanner.Scan(repoPath, language.LanguageKey);
-        languageResult.RemainingAfter = updatedReport.Gaps.Count;
-
-        string title = $"Auto-translate missing {language.LanguageKey} workshop content";
-        string body = BuildPullRequestBody(languageResult, options, existingPr?.BaseRefName ?? options.BaseBranch);
-
-        if (existingPr is null)
-        {
-            var createdPr = CreatePullRequest(repository, branchName, existingPr?.BaseRefName ?? options.BaseBranch, title, body);
-            languageResult.PullRequestNumber = createdPr.Number;
-            languageResult.PullRequestUrl = createdPr.Url;
-        }
-        else
-        {
-            UpdatePullRequest(repository, existingPr.Number, title, body);
-        }
-
-        return languageResult;
     }
 
     private void EnsureGitRepository(string repoPath)
@@ -251,12 +275,19 @@ internal sealed class PrAutomation
 
     private PullRequestInfo? GetOpenPullRequest(string repository, string branchName)
     {
-        var prList = _processRunner.Run(
-            "gh",
-            ["pr", "list", "--repo", repository, "--head", branchName, "--state", "open", "--json", "number,title,url,headRefName,baseRefName"],
-            Directory.GetCurrentDirectory());
+        string prListJson = _openPullRequestJsonProvider is not null
+            ? _openPullRequestJsonProvider(repository, branchName)
+            : _processRunner.Run(
+                "gh",
+                ["pr", "list", "--repo", repository, "--head", branchName, "--state", "open", "--json", "number,title,url,headRefName,baseRefName"],
+                Directory.GetCurrentDirectory()).StandardOutput;
 
-        var pullRequests = JsonSerializer.Deserialize<List<PullRequestInfo>>(prList.StandardOutput) ?? [];
+        return FindOpenPullRequest(prListJson, branchName);
+    }
+
+    internal static PullRequestInfo? FindOpenPullRequest(string prListJson, string branchName)
+    {
+        var pullRequests = JsonSerializer.Deserialize<List<PullRequestInfo>>(prListJson, PullRequestJsonOptions) ?? [];
         return pullRequests.FirstOrDefault(pr => pr.HeadRefName.Equals(branchName, StringComparison.OrdinalIgnoreCase));
     }
 

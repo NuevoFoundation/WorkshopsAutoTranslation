@@ -48,10 +48,11 @@ internal static class Program
         }
 
         var translationService = TranslationService.CreateFromEnvironment();
+        string? repoPath = WorkshopPaths.TryResolveRepositoryRoot(path);
 
         if (File.Exists(path) && Path.GetExtension(path).Equals(".md", StringComparison.OrdinalIgnoreCase))
         {
-            WriteLegacyResult(translationService.TranslateFileIfMissing(path, model, language));
+            WriteLegacyResult(translationService.TranslateFileIfMissing(path, model, language, repoPath));
             return 0;
         }
 
@@ -59,7 +60,7 @@ internal static class Program
         {
             foreach (string filePath in Directory.GetFiles(path, "*.md", SearchOption.AllDirectories).OrderBy(file => file, StringComparer.OrdinalIgnoreCase))
             {
-                WriteLegacyResult(translationService.TranslateFileIfMissing(filePath, model, language));
+                WriteLegacyResult(translationService.TranslateFileIfMissing(filePath, model, language, repoPath));
             }
 
             return 0;
