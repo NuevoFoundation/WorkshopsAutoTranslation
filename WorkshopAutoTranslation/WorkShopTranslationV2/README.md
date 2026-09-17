@@ -57,7 +57,7 @@ Optional language filter:
 
 ### Create or update language PRs
 
-`dotnet run -- --scan-gaps <path-to-local-clone-of-workshops-repo> --create-prs [--model gpt-4o] [--language french] [--max-files-per-pr 100] [--base-branch master] [--branch-prefix auto-translate/] [--repo owner/name] [--dry-run]`
+`dotnet run -- --scan-gaps <path-to-local-clone-of-workshops-repo> --create-prs [--model gpt-4o] [--language french] [--max-workshops-per-pr 8] [--base-branch master] [--branch-prefix auto-translate/] [--repo owner/name] [--dry-run]`
 
 Behavior:
 
@@ -65,7 +65,7 @@ Behavior:
 - Detects missing translated markdown files per target language
 - Warns about orphan non-English workshops with no English counterpart
 - Reuses an open PR when the target branch already has one
-- Limits each language PR to `--max-files-per-pr` files per run
+- Limits each language PR to `--max-workshops-per-pr` whole workshops per run (default 8) — workshops are never split across runs; a run always completes entirely, or defers entirely, per workshop
 - `--dry-run` reports what would happen without translating files, pushing branches, or creating/updating PRs
 
 ## Notes

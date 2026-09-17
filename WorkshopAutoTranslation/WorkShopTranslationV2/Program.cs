@@ -148,6 +148,6 @@ internal static class Program
     {
         Console.WriteLine("Gap scanning usage:");
         Console.WriteLine("  dotnet run -- --scan-gaps <path-to-workshops-repo> --report [--format json] [--language <lang>]");
-        Console.WriteLine("  dotnet run -- --scan-gaps <path-to-workshops-repo> --create-prs [--model gpt-4o] [--language <lang>] [--max-files-per-pr N] [--base-branch master] [--branch-prefix auto-translate/] [--repo owner/name] [--dry-run]");
+        Console.WriteLine("  dotnet run -- --scan-gaps <path-to-workshops-repo> --create-prs [--model gpt-4o] [--language <lang>] [--max-workshops-per-pr N] [--base-branch master] [--branch-prefix auto-translate/] [--repo owner/name] [--dry-run]");
     }
 }

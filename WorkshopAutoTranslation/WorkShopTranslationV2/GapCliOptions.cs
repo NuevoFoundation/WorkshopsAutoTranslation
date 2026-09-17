@@ -8,7 +8,7 @@ internal sealed class GapCliOptions
     public OutputFormat Format { get; init; } = OutputFormat.Text;
     public string Model { get; init; } = "gpt-4o";
     public string? LanguageFilter { get; init; }
-    public int MaxFilesPerPr { get; init; } = 100;
+    public int MaxWorkshopsPerPr { get; init; } = 8;
     public string BaseBranch { get; init; } = "master";
     public string BranchPrefix { get; init; } = "auto-translate/";
     public bool DryRun { get; init; }
@@ -40,7 +40,7 @@ internal sealed class GapCliOptions
         OutputFormat format = OutputFormat.Text;
         string model = "gpt-4o";
         string? languageFilter = null;
-        int maxFilesPerPr = 100;
+        int maxWorkshopsPerPr = 8;
         string baseBranch = "master";
         string branchPrefix = "auto-translate/";
         bool dryRun = false;
@@ -94,10 +94,10 @@ internal sealed class GapCliOptions
                     }
 
                     break;
-                case "--max-files-per-pr":
-                    if (!TryReadValue(args, ref index, out var maxFilesValue) || !int.TryParse(maxFilesValue, out maxFilesPerPr) || maxFilesPerPr <= 0)
+                case "--max-workshops-per-pr":
+                    if (!TryReadValue(args, ref index, out var maxWorkshopsValue) || !int.TryParse(maxWorkshopsValue, out maxWorkshopsPerPr) || maxWorkshopsPerPr <= 0)
                     {
-                        errorMessage = "Please provide a positive integer for --max-files-per-pr.";
+                        errorMessage = "Please provide a positive integer for --max-workshops-per-pr.";
                         return false;
                     }
 
@@ -155,7 +155,7 @@ internal sealed class GapCliOptions
             Format = format,
             Model = model,
             LanguageFilter = languageFilter,
-            MaxFilesPerPr = maxFilesPerPr,
+            MaxWorkshopsPerPr = maxWorkshopsPerPr,
             BaseBranch = baseBranch,
             BranchPrefix = branchPrefix,
             DryRun = dryRun,
