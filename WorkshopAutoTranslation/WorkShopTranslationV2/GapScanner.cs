@@ -63,7 +63,7 @@ internal sealed class GapScanner
         }
 
         var englishWorkshops = new HashSet<string>(
-            englishWorkshopDirectories.Select(Path.GetFileName),
+            englishWorkshopDirectories.Select(Path.GetFileName).OfType<string>(),
             StringComparer.OrdinalIgnoreCase);
 
         foreach (var language in targetLanguages)
