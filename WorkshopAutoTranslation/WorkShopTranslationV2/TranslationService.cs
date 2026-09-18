@@ -14,13 +14,28 @@ internal sealed class TranslationService
 
     public static TranslationService CreateFromEnvironment()
     {
-        var endpoint = new Uri("https://models.inference.ai.azure.com");
-        var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN")
-            ?? throw new InvalidOperationException("The GITHUB_TOKEN environment variable is not set.");
+        // NOTE: GitHub Models (models.inference.ai.azure.com) was retired.
+        // We now use an Azure AI Foundry resource, which exposes the same
+        // Azure.AI.Inference-compatible chat completions API.
+        var endpointValue = Environment.GetEnvironmentVariable("AZURE_AI_ENDPOINT")
+            ?? throw new InvalidOperationException("The AZURE_AI_ENDPOINT environment variable is not set.");
+        var apiKey = Environment.GetEnvironmentVariable("AZURE_AI_API_KEY")
+            ?? throw new InvalidOperationException("The AZURE_AI_API_KEY environment variable is not set.");
 
-        var credential = new AzureKeyCredential(token);
+        var endpoint = new Uri(NormalizeEndpoint(endpointValue));
+        var credential = new AzureKeyCredential(apiKey);
         var client = new ChatCompletionsClient(endpoint, credential, new ChatCompletionsClientOptions());
         return new TranslationService(client);
+    }
+
+    // Azure AI Foundry's chat-completions-compatible route lives at "<resource-endpoint>/models".
+    // Accept either form so a plain resource endpoint (e.g. from the Azure Portal) works as-is.
+    internal static string NormalizeEndpoint(string endpointValue)
+    {
+        string trimmed = endpointValue.TrimEnd('/');
+        return trimmed.EndsWith("/models", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : $"{trimmed}/models";
     }
 
     public TranslationResult TranslateFileIfMissing(string sourceFilePath, string model, LanguageDefinition language, string? repoPath = null)
